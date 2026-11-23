@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { STAGES } from '../data/types';
 import { cartRoute, routeBetween, routeFromHome, routeHome, type Layout, type V3 } from '../layout';
 import { useStore } from '../store';
+import { pickCurse } from './curses';
 import { Label } from './Label';
 
 const CART_SPEED = 3.2;
@@ -21,7 +22,6 @@ const RUSH_SECONDS = 3.5;
 const RUSH_WORK_SECONDS = 0.9;
 /** A failed action keeps him at the rack longer. */
 const RUSH_FAILURE_SECONDS = 4;
-const RUSH_LABEL = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' } as const;
 const TECH_DX = 0.42;
 const FACE_RACK = Math.PI; // racks face +z, so agents look toward -z
 /** One technician per this many projects. */
@@ -69,6 +69,10 @@ class Walker {
   }
   get remaining() {
     return Math.max(0, this.total - this.traveled);
+  }
+  /** Points back to where this walk started, beginning at the current position. */
+  backtrack(): THREE.Vector3[] {
+    return [this.pos.clone(), ...this.pts.slice(0, this.i).reverse()];
   }
 }
 
@@ -321,6 +325,7 @@ function Technician({
     t: 0,
     work: 0,
     speed: TECH_SPEED,
+    curse: '',
   });
 
   const root = useRef<THREE.Group>(null);
@@ -343,6 +348,8 @@ function Technician({
       st.walker = new Walker(path);
       st.target = target;
       st.work = 0;
+      // One line per visit, picked when he sets off.
+      if (phase === 'walk') st.curse = pickCurse(rushJob ? 'action' : 'outage');
       // A rush arrives within RUSH_SECONDS even from the far corner of the floor.
       st.speed = rushJob ? Math.max(TECH_RUSH_SPEED, pathLength(path) / RUSH_SECONDS) : TECH_SPEED;
       setMode(phase);
@@ -384,12 +391,13 @@ function Technician({
         }
         break;
       case 'home':
-        // A new job while walking home: continue from where he stands, via home.
+        // A new job while walking home: turn around along the route he came on.
         {
           const job = pending.current[0] ?? queueRef.current[0];
-          const here: V3 | null = st.walker ? [st.walker.pos.x, 0, st.walker.pos.z] : null;
-          const route = job ? fromHome(job) : null;
-          if (job && here && route && go('walk', [here, ...route], job, pending.current.includes(job))) break;
+          if (job && st.walker && st.at) {
+            const back = st.walker.backtrack().map((p): V3 => [p.x, 0, p.z]);
+            if (go('walk', back, st.at, pending.current.length > 0)) break;
+          }
         }
         if (st.walker!.step(st.speed * dt)) {
           st.phase = 'idle';
@@ -430,12 +438,13 @@ function Technician({
         <Label position={[0, 1.6, 0]} zIndex={9}>
           {controlError && sim.current.at === controlError.serviceId ? (
             <div className="bubble is-failed" title={controlError.message}>
-              ⚠ {controlError.message}
+              <span className="bubble-curse">⚠ {sim.current.curse}</span>
+              <span className="bubble-detail">{controlError.message}</span>
             </div>
           ) : (
             <div className="bubble">
               <span className="bubble-spinner" />
-              {rush && sim.current.at && rush.serviceIds.includes(sim.current.at) ? `${RUSH_LABEL[rush.action]}…` : 'Investigating…'}
+              {sim.current.curse || 'Investigating…'}
             </div>
           )}
         </Label>

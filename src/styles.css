@@ -1194,12 +1194,27 @@ a:focus-visible {
   transform: translateX(-50%) rotate(45deg);
 }
 .bubble.is-failed {
-  max-width: 320px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 340px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
   color: var(--crit-text);
   border-color: color-mix(in srgb, var(--crit) 55%, transparent);
   box-shadow: 0 0 22px -8px var(--crit);
+}
+.bubble-curse {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.bubble-detail {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  opacity: 0.8;
 }
 .bubble.is-failed::after {
   border-color: color-mix(in srgb, var(--crit) 55%, transparent);
