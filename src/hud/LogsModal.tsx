@@ -2,7 +2,7 @@
  * Container logs in a modal over the scene. Docker only: the service id is a container id and
  * the server forwards `GET /api/docker/containers/:id/logs`.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { CloseIcon } from './icons';
 
@@ -12,21 +12,50 @@ export function LogsModal({ serviceId, name, onClose }: { serviceId: string; nam
   const [lines, setLines] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const body = useRef<HTMLPreElement>(null);
 
-  const load = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setLines(await useStore.getState().fetchLogs(serviceId, TAIL));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }, [serviceId]);
+  // Newest lines are at the bottom; follow them unless the reader scrolled up.
+  useEffect(() => {
+    const el = body.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  const stick = useRef(true);
+
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setBusy(true);
+        setError(null);
+        stick.current = true;
+      } else if (body.current) {
+        // Keep the reader where he is unless he already sits at the bottom.
+        const el = body.current;
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 12;
+      }
+      try {
+        const next = await useStore.getState().fetchLogs(serviceId, TAIL);
+        setLines(next);
+        setError(null);
+      } catch (e) {
+        if (!silent) setError((e as Error).message);
+      } finally {
+        if (!silent) setBusy(false);
+      }
+    },
+    [serviceId],
+  );
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // While the window is open, keep pulling new lines.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!document.hidden) void load(true);
+    }, 1_000);
+    return () => clearInterval(t);
   }, [load]);
 
   useEffect(() => {
@@ -58,7 +87,7 @@ export function LogsModal({ serviceId, name, onClose }: { serviceId: string; nam
         ) : lines.length === 0 ? (
           <p className="muted small logs-empty">No log lines.</p>
         ) : (
-          <pre className="logs-body mono">{lines.join('\n')}</pre>
+          <pre ref={body} className="logs-body mono">{lines.join('\n')}</pre>
         )}
       </section>
     </div>
