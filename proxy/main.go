@@ -58,9 +58,9 @@ func newDocker(socket string) *docker {
 	return &docker{client: &http.Client{Transport: tr}}
 }
 
-// do performs one GET against the engine. The caller owns the response body.
-func (d *docker) do(ctx context.Context, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
+// do performs one request against the engine. The caller owns the response body.
+func (d *docker) do(ctx context.Context, method, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (e *upstreamError) Error() string { return e.msg }
 func (d *docker) getJSON(ctx context.Context, path string, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	resp, err := d.do(ctx, path)
+	resp, err := d.do(ctx, http.MethodGet, path)
 	if err != nil {
 		return err
 	}
@@ -306,7 +306,7 @@ func (s *server) logs(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), dockerTimeout)
 	defer cancel()
-	resp, err := s.d.do(ctx, fmt.Sprintf("/containers/%s/logs?stdout=1&stderr=1&timestamps=0&tail=%d", id, tail))
+	resp, err := s.d.do(ctx, http.MethodGet, fmt.Sprintf("/containers/%s/logs?stdout=1&stderr=1&timestamps=0&tail=%d", id, tail))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("can't reach the Docker engine: %v", err))
 		return
@@ -323,6 +323,36 @@ func (s *server) logs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("content-type", "text/plain; charset=utf-8")
 	_, _ = w.Write(demux(body))
+}
+
+// containerAction starts, stops or restarts one container. It is registered only when
+// ALLOW_CONTAINER_CONTROL is enabled: the one place where this proxy is not read-only.
+func (s *server) containerAction(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if !idPattern.MatchString(id) {
+			writeError(w, http.StatusBadRequest, "invalid container id")
+			return
+		}
+		path := fmt.Sprintf("/containers/%s/%s", id, action)
+		if action == "stop" {
+			path += "?t=10"
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), dockerTimeout)
+		defer cancel()
+		resp, err := s.d.do(ctx, http.MethodPost, path)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, fmt.Sprintf("can't reach the Docker engine: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+		// 204 on success; 304 when the container is already in that state.
+		if resp.StatusCode >= 400 {
+			writeDockerError(w, &upstreamError{status: resp.StatusCode, msg: dockerMessage(resp.Body)})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "action": action, "id": id})
+	}
 }
 
 // demux turns Docker's multiplexed log stream (8-byte frame headers per chunk) into plain
@@ -406,7 +436,7 @@ func (s *server) collectStats(ctx context.Context) ([]stat, error) {
 func (s *server) oneStat(ctx context.Context, c rawSummary) (stat, error) {
 	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
 	defer cancel()
-	resp, err := s.d.do(ctx, "/containers/"+c.ID+"/stats?stream=true")
+	resp, err := s.d.do(ctx, http.MethodGet, "/containers/"+c.ID+"/stats?stream=true")
 	if err != nil {
 		return stat{}, err
 	}
@@ -509,6 +539,7 @@ func main() {
 	}
 
 	s := &server{d: newDocker(socket)}
+	allowControl := strings.EqualFold(envOr("ALLOW_CONTAINER_CONTROL", "false"), "true")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /version", s.version)
@@ -517,6 +548,11 @@ func main() {
 	mux.HandleFunc("GET /containers/{id}", s.container)
 	mux.HandleFunc("GET /containers/{id}/logs", s.logs)
 	mux.HandleFunc("GET /stats", s.handleStats)
+	if allowControl {
+		mux.HandleFunc("POST /containers/{id}/start", s.containerAction("start"))
+		mux.HandleFunc("POST /containers/{id}/stop", s.containerAction("stop"))
+		mux.HandleFunc("POST /containers/{id}/restart", s.containerAction("restart"))
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -524,6 +560,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      60 * time.Second,
 	}
-	log.Printf("docker proxy on http://%s → unix:%s", addr, socket)
+	log.Printf("docker proxy on http://%s → unix:%s (container control: %v)", addr, socket, allowControl)
 	log.Fatal(srv.ListenAndServe())
 }

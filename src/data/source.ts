@@ -1,8 +1,12 @@
 import { Collector } from './dokploy/collector';
 import { fetchVersion, serverTransport, type Transport } from './dokploy/api';
 import { DockerCollector } from './docker/collector';
-import { fetchVersion as fetchDockerVersion, serverTransport as dockerTransport } from './docker/api';
-import type { SourceStatus, World, WorldPatch } from './types';
+import {
+  containerAction,
+  fetchVersion as fetchDockerVersion,
+  serverTransport as dockerTransport,
+} from './docker/api';
+import type { ContainerAction, SourceStatus, World, WorldPatch } from './types';
 
 export type PatchListener = (patch: WorldPatch) => void;
 export type StatusListener = (status: SourceStatus) => void;
@@ -10,6 +14,10 @@ export type StatusListener = (status: SourceStatus) => void;
 export interface DataSource {
   /** What the header shows this data comes from: "Dokploy" or "Docker". */
   readonly label: string;
+  /** Whether this source can start/stop/restart containers. */
+  readonly canControl: boolean;
+  /** Start, stop or restart one container. Present only when canControl is true. */
+  action?(id: string, action: ContainerAction): Promise<void>;
   /** Full snapshot; called once on startup. Rejects with a readable message when unreachable. */
   load(): Promise<World>;
   /** Incremental updates (+ connection status). Returns an unsubscribe function. */
@@ -31,6 +39,7 @@ export const SAMPLE_SECONDS = 10;
  */
 export class DokploySource implements DataSource {
   readonly label = 'Dokploy';
+  readonly canControl = false;
   private readonly t: Transport = serverTransport();
   private readonly collector: Collector;
   private readonly patchListeners = new Set<PatchListener>();
@@ -87,13 +96,15 @@ export class DokploySource implements DataSource {
  */
 export class DockerSource implements DataSource {
   readonly label = 'Docker';
+  readonly canControl: boolean;
   private readonly t = dockerTransport();
   private readonly collector: DockerCollector;
   private readonly patchListeners = new Set<PatchListener>();
   private readonly statusListeners = new Set<StatusListener>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor() {
+  constructor(canControl = false) {
+    this.canControl = canControl;
     this.collector = new DockerCollector(this.t, (event, data) => {
       if (event === 'patch') for (const l of this.patchListeners) l(data as WorldPatch);
       else for (const l of this.statusListeners) l(data as SourceStatus);
@@ -129,6 +140,11 @@ export class DockerSource implements DataSource {
     return this.collector.logsFor(containerId, tail);
   }
 
+  async action(id: string, action: ContainerAction) {
+    await containerAction(id, action);
+    void this.collector.tick();
+  }
+
   version() {
     return fetchDockerVersion(this.t).then(
       (v) => (typeof v.version === 'string' && v.version.trim() ? v.version.trim() : null),
@@ -144,8 +160,8 @@ export class DockerSource implements DataSource {
 export async function createSource(): Promise<DataSource> {
   try {
     const res = await fetch('/healthz', { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(5000) });
-    const body = (await res.json()) as { backend?: string };
-    if (body.backend === 'docker') return new DockerSource();
+    const body = (await res.json()) as { backend?: string; allowControl?: boolean };
+    if (body.backend === 'docker') return new DockerSource(body.allowControl === true);
   } catch {
     // fall through to the default backend
   }

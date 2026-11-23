@@ -43,6 +43,38 @@ function describe(e: unknown, url: URL) {
 /** A fixed proxy path, or one derived from the request. */
 type Path = string | ((c: Context) => string);
 
+export type ControlAction = 'start' | 'stop' | 'restart';
+
+/**
+ * POSTs one control action to the proxy. Registered only when the server runs with
+ * ALLOW_CONTAINER_CONTROL enabled; the proxy enforces the same switch.
+ */
+export function controlDocker(target: { url: string }, action: ControlAction) {
+  return async (c: Context) => {
+    // A cross-site form post must not be able to stop containers.
+    const site = c.req.header('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none') {
+      return c.json({ error: 'Cross-site control requests are refused.' }, 403);
+    }
+
+    const id = c.req.param('id') ?? '';
+    const url = new URL(`${target.url}/containers/${encodeURIComponent(id)}/${action}`);
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch (e) {
+      return c.json({ error: describe(e, url) }, 502);
+    }
+    // 304 means the container is already in that state, which is not a failure here.
+    if (!res.ok && res.status !== 304) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return c.json({ error: body?.error ?? `Docker proxy → ${res.status}` }, res.status === 404 ? 404 : 502);
+    }
+    c.header('cache-control', 'no-store');
+    return c.json({ ok: true, action, id });
+  };
+}
+
 export function proxyDocker(target: { url: string }, path: Path, timeoutMs = TIMEOUT_MS) {
   return async (c: Context) => {
     const url = new URL(`${target.url}${typeof path === 'function' ? path(c) : path}`);

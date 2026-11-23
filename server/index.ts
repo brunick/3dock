@@ -16,13 +16,15 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import { forward, loadTarget } from './dokploy.ts';
-import { STATS_TIMEOUT_MS, loadDockerTarget, proxyDocker } from './docker.ts';
+import { STATS_TIMEOUT_MS, controlDocker, loadDockerTarget, proxyDocker } from './docker.ts';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const STATIC_DIR = process.env.STATIC_DIR ?? 'dist';
 const AUTH = /^([^:]+):(.+)$/.exec(process.env.BASIC_AUTH ?? '');
 
 const BACKEND = (process.env.BACKEND ?? 'dokploy').trim().toLowerCase();
+/** Docker mode only: expose start/stop/restart. Off by default. */
+const ALLOW_CONTROL = /^(1|true|yes|on)$/i.test(process.env.ALLOW_CONTAINER_CONTROL ?? '');
 if (BACKEND !== 'dokploy' && BACKEND !== 'docker') {
   console.error(`[3dokploy] BACKEND must be "dokploy" or "docker", not "${BACKEND}".`);
   process.exit(1);
@@ -54,7 +56,7 @@ const CSP = [
 
 const app = new Hono();
 
-app.get('/healthz', (c) => c.json({ ok: true, backend: BACKEND }));
+app.get('/healthz', (c) => c.json({ ok: true, backend: BACKEND, allowControl: ALLOW_CONTROL }));
 
 if (AUTH) app.use('*', basicAuth({ username: AUTH[1], password: AUTH[2], realm: '3Dokploy' }));
 
@@ -62,7 +64,11 @@ app.use('*', async (c, next) => {
   await next();
   c.header('x-content-type-options', 'nosniff');
   c.header('referrer-policy', 'no-referrer');
-  if (!c.req.path.startsWith('/api/')) c.header('content-security-policy', CSP);
+  if (!c.req.path.startsWith('/api/')) {
+    c.header('content-security-policy', CSP);
+    // The HTML references hashed bundles; a cached page keeps an old build alive.
+    if (c.req.path === '/' || c.req.path === '/index.html') c.header('cache-control', 'no-cache');
+  }
 });
 
 if (BACKEND === 'docker') {
@@ -73,6 +79,11 @@ if (BACKEND === 'docker') {
   app.get('/api/docker/containers/:id', proxyDocker(t, (c) => `/containers/${encodeURIComponent(c.req.param('id') ?? '')}`));
   app.get('/api/docker/containers/:id/logs', proxyDocker(t, (c) => `/containers/${encodeURIComponent(c.req.param('id') ?? '')}/logs`));
   app.get('/api/docker/stats', proxyDocker(t, '/stats', STATS_TIMEOUT_MS));
+  if (ALLOW_CONTROL) {
+    app.post('/api/docker/containers/:id/start', controlDocker(t, 'start'));
+    app.post('/api/docker/containers/:id/stop', controlDocker(t, 'stop'));
+    app.post('/api/docker/containers/:id/restart', controlDocker(t, 'restart'));
+  }
 } else {
   app.get('/api/:procedure', forward(dokploy!));
 }

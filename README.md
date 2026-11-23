@@ -9,7 +9,8 @@ walks over to whatever goes down.
 
 - **Live** – status, CPU, memory and network per service, an activity feed; with Dokploy also
   deploys with their real build log and alerts for failed deploys.
-- **Read-only** – 3Dokploy can't deploy, stop or change anything.
+- **Read-only by default** – 3Dokploy can't deploy, stop or change anything. In the Docker
+  backend, container start/stop/restart can be enabled explicitly (see below).
 - **Self-hosted** – you run it next to your Dokploy, against a plain Docker engine, or on your
   own machine. Credentials stay in the server's environment and never reach the browser.
 
@@ -69,6 +70,25 @@ Compose projects become buildings, containers become racks, and CPU, memory, net
 health and status are live. Docker has no deployments, build logs or commit metadata, so
 the deploy pipeline stays empty. Domains are not shown either — Docker does not know them.
 
+**Container control (start / stop / restart).** Off by default. Set
+`ALLOW_CONTAINER_CONTROL=true` for both the proxy and the app to enable the buttons in the
+inspector:
+
+```sh
+ALLOW_CONTAINER_CONTROL=true npm run dev:proxy
+BACKEND=docker ALLOW_CONTAINER_CONTROL=true npm start
+```
+
+or, with Compose:
+
+```sh
+BACKEND=docker ALLOW_CONTAINER_CONTROL=true docker compose --profile docker up -d --build
+```
+
+Those requests are same-origin only, but anyone who can open the page can then stop and
+restart containers. Use `BASIC_AUTH` or keep it on your machine. With the switch off, the
+Docker backend is read-only exactly like the Dokploy one.
+
 The Docker socket grants host-level privileges. The proxy binds to `127.0.0.1` by default
 and only exposes read-only endpoints; still, anyone who can reach the proxy can read the
 whole Docker host.
@@ -87,6 +107,7 @@ build type and port **3000**, set the variables below, then add a domain.
 | Variable | Default | |
 | --- | --- | --- |
 | `BACKEND` | `dokploy` | `dokploy` or `docker` |
+| `ALLOW_CONTAINER_CONTROL` | `false` | Docker mode: expose start/stop/restart |
 | `DOKPLOY_URL` | *dokploy mode* | Your Dokploy, e.g. `https://dokploy.example.com` or `http://host.docker.internal:3000` |
 | `DOKPLOY_API_KEY` | *dokploy mode* | A Dokploy API key. Only the server uses it. |
 | `DOCKER_PROXY_URL` | `http://127.0.0.1:3101` | Docker mode: address of the Go proxy |
@@ -125,8 +146,9 @@ browser ──/api/<procedure>─▶ 3Dokploy server ──x-api-key──▶ Do
    └─ polling, diffing, metrics all happen here
 ```
 
-- Only an **allowlist of read-only GET endpoints** is forwarded (`server/dokploy.ts`,
-  `server/docker.ts`). Anything that changes state is refused, even with a key that could do it.
+- An **allowlist of endpoints** is forwarded (`server/dokploy.ts`, `server/docker.ts`); all
+  others are refused. With the Docker backend, `ALLOW_CONTAINER_CONTROL=true` adds
+  start/stop/restart, and only same-origin requests are accepted for those.
 - **Secrets are stripped** from Dokploy responses before they reach the browser: env vars,
   passwords, tokens, build secrets (3Dokploy never needs them).
 - No database, no sessions, nothing stored. Same-origin only, with a strict Content-Security-Policy.

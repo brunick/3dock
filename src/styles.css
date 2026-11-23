@@ -122,6 +122,14 @@ code {
 .link:hover {
   color: var(--neon);
 }
+.link:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.link:disabled:hover {
+  color: var(--text-2);
+}
 
 /* ---- layout ------------------------------------------------------------------------ */
 

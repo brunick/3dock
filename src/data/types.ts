@@ -61,6 +61,9 @@ export const STAGES = ['Clone', 'Build', 'Push', 'Start', 'Health'] as const;
 export type StageName = (typeof STAGES)[number];
 export type StageStatus = 'queued' | 'running' | 'done' | 'failed';
 
+/** Control actions the Docker backend can perform on a container. */
+export type ContainerAction = 'start' | 'stop' | 'restart';
+
 export type DeployTrigger = 'push' | 'manual';
 /** `queued` = accepted, waiting for the build slot (in the scene: cart still en route). */
 export type DeployStatus = 'queued' | 'running' | 'success' | 'failed';

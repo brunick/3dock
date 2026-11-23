@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { isDb } from '../data/types';
+import { useMemo, useState } from 'react';
+import { isDb, type ContainerAction } from '../data/types';
 import { SAMPLE_SECONDS } from '../data/source';
 import { ago, duration, mb, pct, rate } from '../format';
 import { latestDeploys, useStore } from '../store';
@@ -15,10 +15,26 @@ export function Inspector() {
   const server = useStore((s) => (svc ? s.servers[svc.serverId] : undefined));
   const deployments = useStore((s) => s.deployments);
   const now = useStore((s) => s.now);
+  const backendLabel = useStore((s) => s.backendLabel);
+  const canControl = useStore((s) => s.canControl);
+  const [busy, setBusy] = useState<ContainerAction | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
 
   const recent = useMemo(() => (id ? latestDeploys(deployments, id, 3) : []), [deployments, id]);
 
   if (!svc) return null;
+
+  const run = async (action: ContainerAction) => {
+    setBusy(action);
+    setControlError(null);
+    try {
+      await useStore.getState().controlContainer(svc.id, action);
+    } catch (e) {
+      setControlError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const memRatio = svc.memLimitMb ? svc.memMb / svc.memLimitMb : 0;
   const db = isDb(svc.kind);
@@ -41,6 +57,40 @@ export function Inspector() {
           <CloseIcon />
         </button>
       </header>
+
+      {canControl && (
+        <div className="insp-controls small" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="link"
+            onClick={() => void run('start')}
+            disabled={busy !== null || svc.status !== 'idle'}
+            title={svc.status === 'idle' ? 'Start the container' : 'The container is already running'}
+          >
+            Start
+          </button>
+          <button
+            type="button"
+            className="link"
+            onClick={() => void run('stop')}
+            disabled={busy !== null || svc.status === 'idle'}
+            title={svc.status === 'idle' ? 'The container is already stopped' : 'Stop the container'}
+          >
+            Stop
+          </button>
+          <button
+            type="button"
+            className="link"
+            onClick={() => void run('restart')}
+            disabled={busy !== null}
+            title="Restart the container"
+          >
+            Restart
+          </button>
+          {busy && <span className="muted">…</span>}
+        </div>
+      )}
+      {controlError && <p className="pop-error small">{controlError}</p>}
 
       <div className="insp-row">
         <StatusPill status={svc.status} />
@@ -150,7 +200,9 @@ export function Inspector() {
         </section>
       )}
 
-      <p className="insp-foot muted small">Read-only · live from Dokploy</p>
+      <p className="insp-foot muted small">
+        {canControl ? 'Controls enabled' : 'Read-only'} · live from {backendLabel}
+      </p>
     </aside>
   );
 }

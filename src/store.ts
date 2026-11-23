@@ -9,6 +9,7 @@ import { SAMPLE_SECONDS, type DataSource } from './data/source';
 import {
   isActiveDeploy,
   type Alert,
+  type ContainerAction,
   type Deployment,
   type Environment,
   type Project,
@@ -71,6 +72,10 @@ export interface State extends WorldSlice {
   status: SourceStatus;
   /** What the header names as the upstream: "Dokploy" or "Docker". */
   backendLabel: string;
+  /** Whether the upstream allows start/stop/restart (Docker mode with control enabled). */
+  canControl: boolean;
+  /** A container action the technician should run to, set before the request is sent. */
+  rush: { serviceId: string; action: ContainerAction; n: number } | null;
   /** Upstream's version (header popover), once known. */
   version: string | null;
   /** Why the initial load failed (we keep retrying). */
@@ -102,6 +107,10 @@ export interface State extends WorldSlice {
   muted: boolean;
 
   connect(source: DataSource): () => void;
+  /** Start, stop or restart one container (Docker mode with control enabled). */
+  controlContainer(id: string, action: ContainerAction): Promise<void>;
+  /** Send the technician home after a rush job. */
+  clearRush(): void;
   select(id: string | null): void;
   focusProject(projectId: string): void;
   /** Esc: node → its project → overview. */
@@ -167,6 +176,8 @@ export const useStore = create<State>()((set, get) => ({
   ready: false,
   status: { state: 'connecting' },
   backendLabel: 'Dokploy',
+  canControl: false,
+  rush: null,
   version: null,
   loadError: null,
   layout: null,
@@ -199,6 +210,8 @@ export const useStore = create<State>()((set, get) => ({
       session: s.session + 1,
       status: { state: 'connecting' },
       backendLabel: src.label,
+      canControl: src.canControl,
+      rush: null,
       version: null,
       loadError: null,
       ready: false,
@@ -267,6 +280,17 @@ export const useStore = create<State>()((set, get) => ({
       clearInterval(clock);
       reducedMotionQuery?.removeEventListener('change', onMotion);
     };
+  },
+
+  async controlContainer(id, action) {
+    if (!source?.action) throw new Error('This backend cannot control containers.');
+    // Send the technician running right away; the world catches up with the next poll.
+    set({ rush: { serviceId: id, action, n: Date.now() } });
+    await source.action(id, action);
+  },
+
+  clearRush() {
+    set({ rush: null });
   },
 
   select(id) {

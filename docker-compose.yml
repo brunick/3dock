@@ -14,6 +14,7 @@ services:
     environment:
       LISTEN_ADDR: 0.0.0.0:3101
       DOCKER_SOCKET: /var/run/docker.sock
+      ALLOW_CONTAINER_CONTROL: ${ALLOW_CONTAINER_CONTROL:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     # The socket is root:docker. Give the proxy's user that group instead of running it as root.
@@ -31,6 +32,7 @@ services:
       - "${HOST_PORT:-3000}:3000"
     environment:
       BACKEND: ${BACKEND:-dokploy}
+      ALLOW_CONTAINER_CONTROL: ${ALLOW_CONTAINER_CONTROL:-false}
       DOCKER_PROXY_URL: http://proxy:3101
       DOKPLOY_URL: ${DOKPLOY_URL:-}
       DOKPLOY_API_KEY: ${DOKPLOY_API_KEY:-}

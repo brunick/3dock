@@ -10,7 +10,7 @@
  *   no deployments, no builds      → the deployment pipeline stays empty
  */
 import { PALETTE } from '../dokploy/api';
-import type { Environment, Project, Server, Service, ServiceKind, ServiceStatus } from '../types';
+import type { ContainerAction, Environment, Project, Server, Service, ServiceKind, ServiceStatus } from '../types';
 
 /** Performs one GET against this app's server (`path` starts with /api/...). */
 export type Transport = (path: string, timeoutMs?: number) => Promise<unknown>;
@@ -82,6 +82,23 @@ export const fetchContainers = (t: Transport) => get<Container[]>(t, '/api/docke
 /** The proxy reads two stream samples per container, so this can take a few seconds. */
 export const fetchStats = (t: Transport) => get<ContainerStat[]>(t, '/api/docker/stats', 35_000);
 
+/** POSTs a control action. Only reachable when the server runs with control enabled. */
+export async function containerAction(containerId: string, action: ContainerAction): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/docker/containers/${encodeURIComponent(containerId)}/${action}`, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (e) {
+    throw new UpstreamError(`Can't reach the 3Dokploy server (${(e as Error).message})`);
+  }
+  if (res.ok) return;
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  throw new UpstreamError(body?.error ?? `${action} failed (${res.status})`, res.status);
+}
+
 export async function fetchLogs(t: Transport, containerId: string, tail = 200): Promise<string[]> {
   const text = await get<string>(t, `/api/docker/containers/${encodeURIComponent(containerId)}/logs?tail=${tail}`, 20_000);
   return text
@@ -111,9 +128,9 @@ const visible = (c: Container) => c.labels?.[COMPOSE_ONEOFF] !== 'True';
 const projectOf = (c: Container) => c.labels?.[COMPOSE_PROJECT]?.trim() || STANDALONE;
 
 export function statusOf(c: Container): ServiceStatus {
-  if (c.health === 'unhealthy') return 'error';
   if (c.state === 'restarting' || c.state === 'dead') return 'error';
-  if (c.state === 'running') return 'running';
+  // Docker keeps the last health result on stopped containers; only a running one can be unhealthy.
+  if (c.state === 'running') return c.health === 'unhealthy' ? 'error' : 'running';
   return 'idle';
 }
 
