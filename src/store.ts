@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { SAMPLE_SECONDS, type DataSource } from './data/source';
 import {
   isActiveDeploy,
+  isDb,
   type Alert,
   type ContainerAction,
   type Deployment,
@@ -109,6 +110,8 @@ export interface State extends WorldSlice {
   connect(source: DataSource): () => void;
   /** Start, stop or restart one container (Docker mode with control enabled). */
   controlContainer(id: string, action: ContainerAction): Promise<void>;
+  /** Start, stop or restart every container of a project. */
+  controlProject(projectId: string, action: ContainerAction): Promise<void>;
   /** Send the technician home after a rush job. */
   clearRush(): void;
   select(id: string | null): void;
@@ -287,6 +290,27 @@ export const useStore = create<State>()((set, get) => ({
     // Send the technician running right away; the world catches up with the next poll.
     set({ rush: { serviceId: id, action, n: Date.now() } });
     await source.action(id, action);
+  },
+
+  async controlProject(projectId, action) {
+    if (!source?.action) throw new Error('This backend cannot control containers.');
+    const services = Object.values(get().services).filter((s) => s.projectId === projectId);
+    if (!services.length) return;
+    // Start databases first, stop them last.
+    const ordered = [...services].sort((a, b) => {
+      const d = Number(isDb(a.kind)) - Number(isDb(b.kind));
+      return action === 'stop' ? -d : d;
+    });
+    set({ rush: { serviceId: ordered[0].id, action, n: Date.now() } });
+    let failure: unknown;
+    for (const svc of ordered) {
+      try {
+        await source.action(svc.id, action);
+      } catch (e) {
+        failure ??= e;
+      }
+    }
+    if (failure) throw failure;
   },
 
   clearRush() {

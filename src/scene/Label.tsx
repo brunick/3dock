@@ -18,19 +18,21 @@ interface Props {
   zIndex?: number;
   /** Hide while the (orthographic) camera is zoomed out further than this, so far views stay readable. */
   minZoom?: number;
+  /** Let the label receive clicks (buttons inside it). Off by default so labels never block the scene. */
+  interactive?: boolean;
   children: ReactNode;
 }
 
 const TRANSFORM = { center: 'translate(-50%, -50%)', left: 'translate(0, -50%)', right: 'translate(-100%, -50%)' };
 
-export function Label({ position = [0, 0, 0], anchor = 'center', zIndex = 1, minZoom = 0, children }: Props) {
+export function Label({ position = [0, 0, 0], anchor = 'center', zIndex = 1, minZoom = 0, interactive = false, children }: Props) {
   const group = useRef<THREE.Group>(null);
   const gl = useThree((s) => s.gl);
   const host = useRef<{ el: HTMLDivElement; root: Root } | null>(null);
 
   useLayoutEffect(() => {
     const el = document.createElement('div');
-    el.style.cssText = `position:absolute;top:0;left:0;pointer-events:none;z-index:${zIndex};will-change:transform;visibility:hidden;`;
+    el.style.cssText = `position:absolute;top:0;left:0;pointer-events:${interactive ? 'auto' : 'none'};z-index:${zIndex};will-change:transform;visibility:hidden;`;
     (gl.domElement.parentNode as HTMLElement).appendChild(el);
     const root = createRoot(el);
     host.current = { el, root };
@@ -39,7 +41,7 @@ export function Label({ position = [0, 0, 0], anchor = 'center', zIndex = 1, min
       el.remove();
       setTimeout(() => root.unmount());
     };
-  }, [gl, zIndex]);
+  }, [gl, zIndex, interactive]);
 
   useLayoutEffect(() => {
     host.current?.root.render(<div style={{ transform: TRANSFORM[anchor] }}>{children}</div>);

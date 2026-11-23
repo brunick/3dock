@@ -1072,6 +1072,46 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.building-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgb(5 9 18 / 0.88);
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  box-shadow: 0 0 16px -6px var(--tone);
+  white-space: nowrap;
+  user-select: none;
+}
+.building-action {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
+  border-radius: 3px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.building-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tone) 22%, transparent);
+}
+.building-action:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+.building-action-error {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--crit-text);
+}
+
 .zone-label {
   display: inline-block;
   padding: 1px 7px;

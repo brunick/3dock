@@ -1,6 +1,7 @@
 import type { ThreeEvent } from '@react-three/fiber';
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import * as THREE from 'three';
+import type { ContainerAction } from '../data/types';
 import { DOOR_W, WALL, type BuildingLayout, type ZoneLayout } from '../layout';
 import { useStore } from '../store';
 import { NEON } from '../theme';
@@ -65,14 +66,30 @@ export const Building = memo(function Building({ b }: { b: BuildingLayout }) {
   // Trims brighten on hover / focus; that's the only highlight, so the scene stays calm.
   const glow = focused ? 3.6 : hovered ? 3.1 : 2.2;
   const lineGlow = focused ? 1.8 : hovered ? 1.5 : 0.9;
+  const canControl = useStore((s) => s.canControl);
+  const [busy, setBusy] = useState<ContainerAction | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const meta = useMemo(() => {
     const nodes = Object.values(services).filter((s) => s.projectId === b.projectId);
     const down = nodes.filter((s) => s.status === 'error').length;
     const deploying = nodes.filter((s) => s.status === 'deploying').length;
+    const running = nodes.filter((s) => s.status !== 'idle').length;
     const envs = b.zones.map((z) => environments[z.environmentId]?.name).filter(Boolean);
-    return { nodes: nodes.length, down, deploying, envs };
+    return { nodes: nodes.length, down, deploying, running, envs };
   }, [services, environments, b]);
+
+  const act = async (action: ContainerAction) => {
+    setBusy(action);
+    setActionError(null);
+    try {
+      await useStore.getState().controlProject(b.projectId, action);
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const t = WALL.t;
   const doorX = b.doorX - b.x;
@@ -169,6 +186,38 @@ export const Building = memo(function Building({ b }: { b: BuildingLayout }) {
               {meta.deploying > 0 && <em> · deploying</em>}
               {meta.envs.length > 1 && <> · {meta.envs.length} envs</>}
             </span>
+          </div>
+        </Label>
+      )}
+
+      {project && canControl && meta.nodes > 1 && (
+        // Stack controls next to the entrance, for the whole project rather than one rack.
+        <Label position={[b.doorX - DOOR_W / 2 - 0.55, 0.55, b.z + b.d + 0.5]} zIndex={5} minZoom={14} interactive>
+          <div
+            className="building-actions"
+            style={{ ['--tone' as string]: color }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="building-action"
+              disabled={busy !== null}
+              onClick={() => void act(meta.running > 0 ? 'stop' : 'start')}
+              title={meta.running > 0 ? `Stop all ${meta.nodes} containers` : `Start all ${meta.nodes} containers`}
+            >
+              {busy === 'start' ? 'Starting…' : busy === 'stop' ? 'Stopping…' : meta.running > 0 ? 'Stop all' : 'Start all'}
+            </button>
+            <button
+              type="button"
+              className="building-action"
+              disabled={busy !== null}
+              onClick={() => void act('restart')}
+              title="Restart all containers"
+            >
+              {busy === 'restart' ? '…' : '⟳'}
+            </button>
+            {actionError && <span className="building-action-error">{actionError}</span>}
           </div>
         </Label>
       )}
