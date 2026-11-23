@@ -15,6 +15,8 @@ import type { Context } from 'hono';
 const DEFAULT_URL = 'http://127.0.0.1:3101';
 const TIMEOUT_MS = 15_000;
 export const STATS_TIMEOUT_MS = 30_000;
+/** Stops may use Docker's whole grace period, so control requests wait longer than the proxy. */
+const CONTROL_TIMEOUT_MS = 35_000;
 
 /** Reads the proxy address from the environment, or explains what is wrong. */
 export function loadDockerTarget(): { url: string } {
@@ -61,7 +63,7 @@ export function controlDocker(target: { url: string }, action: ControlAction) {
     const url = new URL(`${target.url}/containers/${encodeURIComponent(id)}/${action}`);
     let res: Response;
     try {
-      res = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS) });
+      res = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS) });
     } catch (e) {
       return c.json({ error: describe(e, url) }, 502);
     }

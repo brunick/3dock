@@ -89,7 +89,7 @@ export async function containerAction(containerId: string, action: ContainerActi
     res = await fetch(`/api/docker/containers/${encodeURIComponent(containerId)}/${action}`, {
       method: 'POST',
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(40_000),
     });
   } catch (e) {
     throw new UpstreamError(`Can't reach the 3Dokploy server (${(e as Error).message})`);

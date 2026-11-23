@@ -335,10 +335,13 @@ func (s *server) containerAction(action string) http.HandlerFunc {
 			return
 		}
 		path := fmt.Sprintf("/containers/%s/%s", id, action)
+		timeout := dockerTimeout
 		if action == "stop" {
 			path += "?t=10"
+			// Docker may use the full stop grace period; the client must wait longer than that.
+			timeout = 30 * time.Second
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), dockerTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		resp, err := s.d.do(ctx, http.MethodPost, path)
 		if err != nil {
