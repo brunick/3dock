@@ -131,7 +131,7 @@ export interface State extends WorldSlice {
   /** Opens a header dropdown, or closes it when it's already open (null closes any). */
   toggleMenu(tab: MenuTab | null): void;
   cameraCommand(kind: CameraCommand['kind'], extra?: Pick<CameraCommand, 'dx' | 'dz'>): void;
-  fetchLogs(deploymentId: string): Promise<string[]>;
+  fetchLogs(deploymentId: string, tail?: number): Promise<string[]>;
   cartGone(deploymentId: string): void;
 }
 
@@ -391,8 +391,8 @@ export const useStore = create<State>()((set, get) => ({
     set((s) => ({ camera: { kind, n: (s.camera?.n ?? 0) + 1, ...extra } }));
   },
 
-  fetchLogs(deploymentId) {
-    return source ? source.logs(deploymentId) : Promise.resolve([]);
+  fetchLogs(deploymentId, tail = 60) {
+    return source ? source.logs(deploymentId, tail) : Promise.resolve([]);
   },
   cartGone(deploymentId) {
     set((s) => ({ carts: s.carts.filter((id) => id !== deploymentId) }));

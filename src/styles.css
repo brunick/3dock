@@ -562,6 +562,36 @@ code {
   font-weight: 600;
   font-size: 13px;
 }
+.insp-card.is-clickable {
+  cursor: pointer;
+}
+.insp-card.is-clickable:hover,
+.insp-card.is-clickable:focus-visible {
+  border-color: color-mix(in srgb, var(--neon) 40%, transparent);
+}
+.logs-preview {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.logs-preview li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.logs-preview-error {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--crit-text);
+}
 
 .sparkline {
   position: relative;
@@ -1215,6 +1245,55 @@ a:focus-visible {
   white-space: nowrap;
   font-size: 10px;
   opacity: 0.8;
+}
+
+/* ---- container logs modal ---------------------------------------------------------- */
+
+.logs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgb(2 5 10 / 0.66);
+  pointer-events: auto;
+}
+.logs-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: min(72vh, 680px);
+  overflow: hidden;
+}
+.logs-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.logs-head strong {
+  min-width: 0;
+}
+.logs-head .link {
+  margin-left: auto;
+}
+.logs-body {
+  margin: 0;
+  padding: 12px 14px 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  background: rgb(0 0 0 / 0.25);
+}
+.logs-empty {
+  padding: 16px;
+  margin: 0;
 }
 .bubble.is-failed::after {
   border-color: color-mix(in srgb, var(--crit) 55%, transparent);

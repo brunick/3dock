@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { isDb, type ContainerAction } from '../data/types';
 import { SAMPLE_SECONDS } from '../data/source';
 import { ago, duration, mb, pct, rate } from '../format';
@@ -6,6 +6,7 @@ import { latestDeploys, useStore } from '../store';
 import { TRIGGER_LABEL } from '../theme';
 import { DeployPill, KindBadge, Sparkline, StatusPill } from './bits';
 import { CloseIcon, ExternalIcon } from './icons';
+import { LogsModal } from './LogsModal';
 
 export function Inspector() {
   const id = useStore((s) => s.selectedId);
@@ -19,6 +20,23 @@ export function Inspector() {
   const canControl = useStore((s) => s.canControl);
   const [busy, setBusy] = useState<ContainerAction | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logPreview, setLogPreview] = useState<string[] | null>(null);
+  const [logPreviewError, setLogPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (backendLabel !== 'Docker' || !id) return;
+    let alive = true;
+    setLogPreview(null);
+    setLogPreviewError(null);
+    void useStore.getState().fetchLogs(id, 3).then(
+      (lines) => alive && setLogPreview(lines.slice(-3)),
+      (e) => alive && setLogPreviewError((e as Error).message),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [id, backendLabel]);
 
   const recent = useMemo(() => (id ? latestDeploys(deployments, id, 3) : []), [deployments, id]);
 
@@ -130,6 +148,37 @@ export function Inspector() {
         </div>
       </section>
 
+      {backendLabel === 'Docker' && (
+        <section
+          className="insp-card is-clickable"
+          role="button"
+          tabIndex={0}
+          onClick={() => setLogsOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') setLogsOpen(true);
+          }}
+          title="Open the container logs"
+        >
+          <div className="insp-card-head">
+            <span className="label">Logs</span>
+            <span className="value small muted">last 3 · open ›</span>
+          </div>
+          {logPreviewError ? (
+            <p className="logs-preview-error small">{logPreviewError}</p>
+          ) : logPreview === null ? (
+            <p className="muted small">Loading…</p>
+          ) : logPreview.length ? (
+            <ol className="logs-preview mono">
+              {logPreview.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ol>
+          ) : (
+            <p className="muted small">No log lines.</p>
+          )}
+        </section>
+      )}
+
       {svc.net && (
         <section className="insp-card net-card">
           <div>
@@ -203,6 +252,8 @@ export function Inspector() {
       <p className="insp-foot muted small">
         {canControl ? 'Controls enabled' : 'Read-only'} · live from {backendLabel}
       </p>
+
+      {logsOpen && <LogsModal serviceId={svc.id} name={svc.name} onClose={() => setLogsOpen(false)} />}
     </aside>
   );
 }
