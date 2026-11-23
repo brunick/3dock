@@ -170,6 +170,7 @@ function SourceBadge() {
   const status = useStore((s) => s.status);
   const loadError = useStore((s) => s.loadError);
   const version = useStore((s) => s.version);
+  const backendLabel = useStore((s) => s.backendLabel);
   const now = useStore((s) => s.now);
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
@@ -194,10 +195,10 @@ function SourceBadge() {
       {open && (
         <span className="badge-pop panel" role="dialog" aria-label="Connection">
           <span className="label">Connected to</span>
-          <b className="mono truncate">{version ? `Dokploy ${version}` : 'Dokploy'}</b>
+          <b className="mono truncate">{version ? `${backendLabel} ${version}` : backendLabel}</b>
           <span className="muted small">{status.syncedAt ? `Synced ${ago(status.syncedAt, now)}` : 'Not synced yet'}</span>
           {error && <span className="pop-error small">{error}</span>}
-          <span className="muted small">Read-only. Configured on this server; the API key never reaches your browser.</span>
+          <span className="muted small">Read-only. Configured on this server; credentials never reach your browser.</span>
         </span>
       )}
     </span>

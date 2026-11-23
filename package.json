@@ -1,7 +1,7 @@
 {
   "name": "3dokploy",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A live, isometric sci-fi view of your Dokploy: projects as buildings, services as racks, deploys on carts. Read-only.",
   "license": "MIT",
   "type": "module",
@@ -12,6 +12,7 @@
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "node --experimental-strip-types --watch server/index.ts",
     "dev:web": "vite",
+    "dev:proxy": "go run -C proxy .",
     "build": "tsc --noEmit && vite build",
     "start": "node --experimental-strip-types server/index.ts",
     "typecheck": "tsc --noEmit",

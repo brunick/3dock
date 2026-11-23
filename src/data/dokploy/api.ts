@@ -56,7 +56,7 @@ export const KINDS: { list: string; id: string; kind: ServiceKind; status: strin
 /** Dokploy: idle = never deployed / stopped, running = deploy in progress, done = up, error = failed. */
 const STATUS: Record<string, ServiceStatus> = { idle: 'idle', running: 'deploying', done: 'running', error: 'error' };
 
-const PALETTE = ['#7c6cff', '#2de2ff', '#2bd98a', '#ffb547', '#ff5fa2', '#4f8bff', '#c86bff', '#ff7a45', '#1fd1c1', '#d4f54a', '#8fd3ff'];
+export const PALETTE = ['#7c6cff', '#2de2ff', '#2bd98a', '#ffb547', '#ff5fa2', '#4f8bff', '#c86bff', '#ff7a45', '#1fd1c1', '#d4f54a', '#8fd3ff'];
 
 export const LOCAL_SERVER: Server = { id: 'local', name: 'dokploy (local)' };
 

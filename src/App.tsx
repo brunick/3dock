@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { DokploySource } from './data/source';
+import { createSource } from './data/source';
 import { ago } from './format';
 import { Breadcrumb } from './hud/Breadcrumb';
 import { Inspector } from './hud/Inspector';
@@ -16,7 +16,17 @@ import { useStore } from './store';
 export function App() {
   const ready = useStore((s) => s.ready);
 
-  useEffect(() => useStore.getState().connect(new DokploySource()), []);
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    let cancelled = false;
+    void createSource().then((source) => {
+      if (!cancelled) dispose = useStore.getState().connect(source);
+    });
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, []);
   useEffect(() => bindSounds(), []);
 
   return (
@@ -50,16 +60,16 @@ function Boot() {
     return (
       <div className="boot panel">
         <span className="bubble-spinner" />
-        Connecting to Dokploy…
+        Connecting…
       </div>
     );
   }
   return (
     <div className="boot boot-error panel" role="alert">
-      <strong>Can't load Dokploy data</strong>
+      <strong>Can't load data</strong>
       <p className="mono">{loadError}</p>
       <p className="muted small">
-        Retrying every 5 seconds. Check <code>DOKPLOY_URL</code> and <code>DOKPLOY_API_KEY</code> in this server's environment.
+        Retrying every 5 seconds. Check this server's backend configuration and that the upstream is reachable.
       </p>
     </div>
   );

@@ -1,11 +1,15 @@
 import { Collector } from './dokploy/collector';
 import { fetchVersion, serverTransport, type Transport } from './dokploy/api';
+import { DockerCollector } from './docker/collector';
+import { fetchVersion as fetchDockerVersion, serverTransport as dockerTransport } from './docker/api';
 import type { SourceStatus, World, WorldPatch } from './types';
 
 export type PatchListener = (patch: WorldPatch) => void;
 export type StatusListener = (status: SourceStatus) => void;
 
 export interface DataSource {
+  /** What the header shows this data comes from: "Dokploy" or "Docker". */
+  readonly label: string;
   /** Full snapshot; called once on startup. Rejects with a readable message when unreachable. */
   load(): Promise<World>;
   /** Incremental updates (+ connection status). Returns an unsubscribe function. */
@@ -26,6 +30,7 @@ export const SAMPLE_SECONDS = 10;
  * an allowlist of read-only endpoints with the server's key. Polling pauses while the tab is hidden.
  */
 export class DokploySource implements DataSource {
+  readonly label = 'Dokploy';
   private readonly t: Transport = serverTransport();
   private readonly collector: Collector;
   private readonly patchListeners = new Set<PatchListener>();
@@ -74,4 +79,75 @@ export class DokploySource implements DataSource {
       () => null,
     );
   }
+}
+
+/**
+ * Read-only view of the local Docker engine through this app's own /api/docker routes.
+ * Docker has no deployments, so the pipeline stays empty.
+ */
+export class DockerSource implements DataSource {
+  readonly label = 'Docker';
+  private readonly t = dockerTransport();
+  private readonly collector: DockerCollector;
+  private readonly patchListeners = new Set<PatchListener>();
+  private readonly statusListeners = new Set<StatusListener>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    this.collector = new DockerCollector(this.t, (event, data) => {
+      if (event === 'patch') for (const l of this.patchListeners) l(data as WorldPatch);
+      else for (const l of this.statusListeners) l(data as SourceStatus);
+    });
+  }
+
+  async load() {
+    await this.collector.bootstrap();
+    if (!this.collector.world) throw new Error(this.collector.status.message ?? 'Could not load data from Docker.');
+    return this.collector.world;
+  }
+
+  subscribe(onPatch: PatchListener, onStatus?: StatusListener) {
+    this.patchListeners.add(onPatch);
+    if (onStatus) {
+      this.statusListeners.add(onStatus);
+      onStatus(this.collector.status);
+    }
+    this.timer ??= setInterval(() => {
+      if (!document.hidden) void this.collector.tick();
+    }, POLL_MS);
+    return () => {
+      this.patchListeners.delete(onPatch);
+      if (onStatus) this.statusListeners.delete(onStatus);
+      if (!this.patchListeners.size && this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    };
+  }
+
+  logs(containerId: string, tail = 60) {
+    return this.collector.logsFor(containerId, tail);
+  }
+
+  version() {
+    return fetchDockerVersion(this.t).then(
+      (v) => (typeof v.version === 'string' && v.version.trim() ? v.version.trim() : null),
+      () => null,
+    );
+  }
+}
+
+/**
+ * The server announces its backend on /healthz; pick the matching data source.
+ * The page is served by that same server, so a failure here falls back to Dokploy.
+ */
+export async function createSource(): Promise<DataSource> {
+  try {
+    const res = await fetch('/healthz', { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(5000) });
+    const body = (await res.json()) as { backend?: string };
+    if (body.backend === 'docker') return new DockerSource();
+  } catch {
+    // fall through to the default backend
+  }
+  return new DokploySource();
 }

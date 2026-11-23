@@ -1,7 +1,26 @@
 # Self-host 3Dokploy:  docker compose up -d  →  http://localhost:3000
 # Settings come from a .env file next to this one (see .env.example).
-# DOKPLOY_URL and DOKPLOY_API_KEY are required.
+#
+# Two backends, chosen with BACKEND:
+#   dokploy (default)  DOKPLOY_URL and DOKPLOY_API_KEY are required.
+#   docker             the proxy service reads the local Docker socket; no Dokploy needed:
+#                      BACKEND=docker docker compose --profile docker up -d
 services:
+  # Read-only HTTP facade in front of the Docker socket. Only started with the "docker" profile.
+  proxy:
+    profiles: ["docker"]
+    build: ./proxy
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: 0.0.0.0:3101
+      DOCKER_SOCKET: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # The socket is root:docker. Give the proxy's user that group instead of running it as root.
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env to the socket's group id (stat -c %g /var/run/docker.sock)}"
+    # No ports: only 3dokploy reaches it, over the compose network.
+
   3dokploy:
     build: .
     # Or skip the build and use the published image:
@@ -11,8 +30,10 @@ services:
       # Dokploy itself listens on 3000: on the same machine, use e.g. "3100:3000".
       - "${HOST_PORT:-3000}:3000"
     environment:
-      DOKPLOY_URL: ${DOKPLOY_URL:?set DOKPLOY_URL in .env}
-      DOKPLOY_API_KEY: ${DOKPLOY_API_KEY:?set DOKPLOY_API_KEY in .env}
+      BACKEND: ${BACKEND:-dokploy}
+      DOCKER_PROXY_URL: http://proxy:3101
+      DOKPLOY_URL: ${DOKPLOY_URL:-}
+      DOKPLOY_API_KEY: ${DOKPLOY_API_KEY:-}
       BASIC_AUTH: ${BASIC_AUTH:-}
     extra_hosts:
       # Lets DOKPLOY_URL=http://host.docker.internal:3000 reach a Dokploy on the same machine.

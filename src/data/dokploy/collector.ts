@@ -60,7 +60,7 @@ const milli = (v: number) => Math.round(v * 1000) / 1000;
 /** How far back a network rate may look for a counter change (see netRate). */
 const NET_WINDOW_MS = 5 * 60_000;
 
-type NetSample = { at: number; rx: number; tx: number };
+export type NetSample = { at: number; rx: number; tx: number };
 
 /** Id of the node for one container of a service; see `compose()`. */
 export const containerNodeId = (serviceId: string, key: string) => `${serviceId}::${key}`;
@@ -92,7 +92,7 @@ function containerLabel(key: string, appName: string) {
  * usually zero. Measure against the newest older sample whose counter actually differs: the
  * step then averages over the time it took to show up, which is the best estimate available.
  */
-function netRate(samples: NetSample[], now: NetSample, key: 'rx' | 'tx') {
+export function netRate(samples: NetSample[], now: NetSample, key: 'rx' | 'tx') {
   for (let i = samples.length - 1; i >= 0; i--) {
     const old = samples[i];
     if (now[key] < old[key]) return 0; // counters reset (container restarted)

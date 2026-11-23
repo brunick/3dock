@@ -69,7 +69,9 @@ export interface State extends WorldSlice {
   session: number;
   ready: boolean;
   status: SourceStatus;
-  /** Dokploy's version (header popover), once known. */
+  /** What the header names as the upstream: "Dokploy" or "Docker". */
+  backendLabel: string;
+  /** Upstream's version (header popover), once known. */
   version: string | null;
   /** Why the initial load failed (we keep retrying). */
   loadError: string | null;
@@ -164,6 +166,7 @@ export const useStore = create<State>()((set, get) => ({
   alerts: {},
   ready: false,
   status: { state: 'connecting' },
+  backendLabel: 'Dokploy',
   version: null,
   loadError: null,
   layout: null,
@@ -195,6 +198,7 @@ export const useStore = create<State>()((set, get) => ({
     set((s) => ({
       session: s.session + 1,
       status: { state: 'connecting' },
+      backendLabel: src.label,
       version: null,
       loadError: null,
       ready: false,
