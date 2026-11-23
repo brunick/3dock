@@ -9,7 +9,8 @@
  *
  * Frame: x → right, z → toward the camera, y up.
  */
-import { isDb, type Environment, type Project, type Service } from './data/types';
+import { isTank, unitRole } from './data/roles';
+import type { Environment, Project, Service } from './data/types';
 
 export type V3 = [number, number, number];
 
@@ -91,7 +92,7 @@ export function structureKey({ projects, environments, services }: Structure) {
   return [
     projects.map((p) => p.id).join(','),
     environments.map((e) => `${e.id}@${e.projectId}`).join(','),
-    services.map((s) => `${s.id}@${s.environmentId}:${isDb(s.kind) ? 'd' : 'a'}`).join(','),
+    services.map((s) => `${s.id}@${s.environmentId}:${unitRole(s)}`).join(','),
   ].join('|');
 }
 
@@ -105,7 +106,9 @@ export function computeLayout({ projects, environments, services }: Structure): 
     byEnv.set(s.environmentId, list);
   }
   // Apps and compose stacks first, databases at the end of the row.
-  for (const list of byEnv.values()) list.sort((a, b) => Number(isDb(a.kind)) - Number(isDb(b.kind)));
+  for (const list of byEnv.values()) {
+    list.sort((a, b) => Number(isTank(unitRole(a))) - Number(isTank(unitRole(b))));
+  }
 
   const ordered = [...projects].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 

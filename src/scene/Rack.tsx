@@ -2,18 +2,23 @@ import { Billboard } from '@react-three/drei';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { memo, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { isDb, type Service } from '../data/types';
+import { isTank, unitRole, unitTint, type UnitRole } from '../data/roles';
+import type { Service } from '../data/types';
 import { mb, pct } from '../format';
 import { RACK, TANK, type Layout, type Slot } from '../layout';
 import { matchesSearch, useStore } from '../store';
-import { ACCENT, KIND_COLOR, NEON } from '../theme';
+import { ACCENT, NEON } from '../theme';
 import { Label } from './Label';
 import { CABINET, CABINET_DOOR, DIM_OPACITY, GEO, TANK_BODY, heatColor, ledMaterial } from './materials';
 
 const LED_ROWS = [0.36, 0.62, 0.88, 1.14, 1.4];
 const BASE_Y = 0.03; // building slab height
 
-export const unitHeight = (svc: Service) => (isDb(svc.kind) ? 0.08 + TANK.h + TANK.r * 0.35 : RACK.h + 0.06);
+export const unitHeight = (svc: Service) => {
+  const role = unitRole(svc);
+  if (isTank(role)) return 0.08 + TANK.h + TANK.r * 0.35;
+  return RACK.h + (role === 'proxy' || role === 'worker' ? 0.22 : 0.06);
+};
 
 /** One service in the scene: wiring (data, pointer events) around a dumb Cabinet / Tank. */
 export const ServiceUnit = memo(function ServiceUnit({ slot }: { slot: Slot }) {
@@ -26,6 +31,7 @@ export const ServiceUnit = memo(function ServiceUnit({ slot }: { slot: Slot }) {
 
   if (!svc) return null;
   const dim = !matchesSearch(svc, project, search, env);
+  const role = unitRole(svc);
 
   const over = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
@@ -43,10 +49,10 @@ export const ServiceUnit = memo(function ServiceUnit({ slot }: { slot: Slot }) {
 
   return (
     <group position={[slot.pos[0], BASE_Y, slot.pos[2]]} onPointerOver={over} onPointerOut={out} onClick={click}>
-      {isDb(svc.kind) ? (
+      {isTank(role) ? (
         <Tank svc={svc} dim={dim} heat={heatmap} />
       ) : (
-        <Cabinet svc={svc} dim={dim} heat={heatmap} />
+        <Cabinet svc={svc} role={role} dim={dim} heat={heatmap} />
       )}
       {svc.status === 'error' && <ErrorBalloon y={unitHeight(svc) + 0.75} />}
     </group>
@@ -59,14 +65,14 @@ interface UnitProps {
   heat: boolean;
 }
 
-export function Cabinet({ svc, dim, heat }: UnitProps) {
+export function Cabinet({ svc, role, dim, heat }: UnitProps & { role: UnitRole }) {
   const body = useMemo(() => (heat ? heatColor(svc.cpu, 'cabinet') : new THREE.Color(CABINET)), [heat, svc.cpu]);
   const door = useMemo(() => (heat ? body.clone().multiplyScalar(0.8) : new THREE.Color(CABINET_DOOR)), [heat, body]);
   // `transparent` is baked into the shader program, so a dim toggle remounts the material (key).
   const fade = { transparent: dim, opacity: dim ? DIM_OPACITY : 1 };
   const mk = dim ? 'dim' : 'solid';
   const led = ledMaterial(svc.status, dim);
-  const kind = KIND_COLOR[svc.kind];
+  const kind = unitTint(svc);
 
   return (
     <group>
@@ -93,6 +99,9 @@ export function Cabinet({ svc, dim, heat }: UnitProps) {
       {LED_ROWS.map((y) => (
         <mesh key={y} geometry={GEO.rackLed} material={led} position={[0, y, RACK.d / 2 + 0.016]} />
       ))}
+      {role === 'web' && <WebPanel color={kind} dim={dim} />}
+      {role === 'proxy' && <ProxyRing color={kind} dim={dim} />}
+      {role === 'worker' && <WorkGear color={kind} dim={dim} cpu={svc.cpu} />}
       <ReplicaMarks count={svc.replicas} z={RACK.d / 2 + 0.2} dim={dim} />
     </group>
   );
@@ -102,7 +111,7 @@ export function Tank({ svc, dim, heat }: UnitProps) {
   const body = useMemo(() => (heat ? heatColor(svc.cpu, 'tank') : new THREE.Color(TANK_BODY)), [heat, svc.cpu]);
   const fade = { transparent: dim, opacity: dim ? DIM_OPACITY : 1 };
   const mk = dim ? 'dim' : 'solid';
-  const band = KIND_COLOR[svc.kind];
+  const band = unitTint(svc);
   const top = 0.08 + TANK.h;
 
   return (
@@ -130,6 +139,83 @@ export function Tank({ svc, dim, heat }: UnitProps) {
         </mesh>
       ))}
       <mesh geometry={GEO.tankLed} material={ledMaterial(svc.status, dim)} position-y={top + TANK.r * 0.35 + 0.02} />
+    </group>
+  );
+}
+
+/** Web server: two blades, a vent strip and a row of status lights on the door. */
+function WebPanel({ color, dim }: { color: string; dim: boolean }) {
+  const fade = { transparent: dim, opacity: dim ? DIM_OPACITY : 1 };
+  return (
+    <group position={[0, RACK.h * 0.58, RACK.d / 2 + 0.018]}>
+      {[-0.11, 0.11].map((y) => (
+        <mesh key={y} position-y={y}>
+          <boxGeometry args={[RACK.w - 0.18, 0.16, 0.02]} />
+          <meshStandardMaterial color={CABINET_DOOR} roughness={0.35} metalness={0.6} {...fade} />
+        </mesh>
+      ))}
+      {[-0.09, -0.045, 0, 0.045, 0.09].map((x) => (
+        <mesh key={x} position={[x, -0.25, 0.012]}>
+          <boxGeometry args={[0.018, 0.018, 0.008]} />
+          <meshBasicMaterial color={color} toneMapped={false} transparent opacity={dim ? 0.2 : 0.9} />
+        </mesh>
+      ))}
+      {[-0.02, -0.07, -0.12].map((y) => (
+        <mesh key={y} position={[0, y, 0.012]}>
+          <boxGeometry args={[RACK.w - 0.34, 0.012, 0.006]} />
+          <meshBasicMaterial color={color} toneMapped={false} transparent opacity={dim ? 0.12 : 0.4} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** Proxy: a slowly turning routing ring on the roof. */
+function ProxyRing({ color, dim }: { color: string; dim: boolean }) {
+  const ref = useRef<THREE.Mesh>(null);
+  const still = useStore((s) => s.reducedMotion);
+  useFrame(({ clock }) => {
+    if (ref.current && !still) ref.current.rotation.z = clock.elapsedTime * 0.7;
+  });
+  return (
+    <group position={[0, RACK.h + 0.14, 0]} rotation-x={Math.PI / 2}>
+      <mesh ref={ref}>
+        <torusGeometry args={[0.23, 0.024, 8, 32]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={dim ? 0.2 : 1.3}
+          roughness={0.35}
+          toneMapped={false}
+          transparent
+          opacity={dim ? DIM_OPACITY : 1}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+/** Worker: a gear that turns with the CPU load. */
+function WorkGear({ color, dim, cpu }: { color: string; dim: boolean; cpu: number }) {
+  const ref = useRef<THREE.Group>(null);
+  const still = useStore((s) => s.reducedMotion);
+  useFrame((_, rawDt) => {
+    if (ref.current && !still) ref.current.rotation.y += Math.min(rawDt, 0.1) * (0.5 + Math.min(5, cpu * 6));
+  });
+  const teeth = Array.from({ length: 8 }, (_, i) => (i / 8) * Math.PI * 2);
+  const fade = { transparent: dim, opacity: dim ? DIM_OPACITY : 1 };
+  return (
+    <group ref={ref} position={[0, RACK.h + 0.13, 0]}>
+      <mesh rotation-x={Math.PI / 2}>
+        <torusGeometry args={[0.15, 0.03, 6, 20]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={dim ? 0.2 : 1.1} toneMapped={false} {...fade} />
+      </mesh>
+      {teeth.map((a) => (
+        <mesh key={a} position={[Math.cos(a) * 0.19, 0, Math.sin(a) * 0.19]}>
+          <boxGeometry args={[0.055, 0.05, 0.055]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={dim ? 0.15 : 0.9} toneMapped={false} {...fade} />
+        </mesh>
+      ))}
     </group>
   );
 }
