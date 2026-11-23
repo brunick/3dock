@@ -1193,6 +1193,17 @@ a:focus-visible {
   border-bottom: 1px solid var(--border-strong);
   transform: translateX(-50%) rotate(45deg);
 }
+.bubble.is-failed {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--crit-text);
+  border-color: color-mix(in srgb, var(--crit) 55%, transparent);
+  box-shadow: 0 0 22px -8px var(--crit);
+}
+.bubble.is-failed::after {
+  border-color: color-mix(in srgb, var(--crit) 55%, transparent);
+}
 .bubble-spinner {
   width: 11px;
   height: 11px;

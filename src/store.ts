@@ -75,8 +75,10 @@ export interface State extends WorldSlice {
   backendLabel: string;
   /** Whether the upstream allows start/stop/restart (Docker mode with control enabled). */
   canControl: boolean;
-  /** A container action the technician should run to, set before the request is sent. */
-  rush: { serviceId: string; action: ContainerAction; n: number } | null;
+  /** Container actions the technician should visit in order, set before the requests are sent. */
+  rush: { serviceIds: string[]; action: ContainerAction; n: number } | null;
+  /** The last failed container action, so the technician can stop and look at it. */
+  controlError: { serviceId: string; message: string; n: number } | null;
   /** Upstream's version (header popover), once known. */
   version: string | null;
   /** Why the initial load failed (we keep retrying). */
@@ -181,6 +183,7 @@ export const useStore = create<State>()((set, get) => ({
   backendLabel: 'Dokploy',
   canControl: false,
   rush: null,
+  controlError: null,
   version: null,
   loadError: null,
   layout: null,
@@ -215,6 +218,7 @@ export const useStore = create<State>()((set, get) => ({
       backendLabel: src.label,
       canControl: src.canControl,
       rush: null,
+  controlError: null,
       version: null,
       loadError: null,
       ready: false,
@@ -288,8 +292,17 @@ export const useStore = create<State>()((set, get) => ({
   async controlContainer(id, action) {
     if (!source?.action) throw new Error('This backend cannot control containers.');
     // Send the technician running right away; the world catches up with the next poll.
-    set({ rush: { serviceId: id, action, n: Date.now() } });
-    await source.action(id, action);
+    const n = Date.now();
+    set({ rush: { serviceIds: [id], action, n }, controlError: null });
+    setTimeout(() => {
+      if (get().rush?.n === n) set({ rush: null });
+    }, 60_000);
+    try {
+      await source.action(id, action);
+    } catch (e) {
+      set({ controlError: { serviceId: id, message: (e as Error).message, n: Date.now() } });
+      throw e;
+    }
   },
 
   async controlProject(projectId, action) {
@@ -301,13 +314,18 @@ export const useStore = create<State>()((set, get) => ({
       const d = Number(isDb(a.kind)) - Number(isDb(b.kind));
       return action === 'stop' ? -d : d;
     });
-    set({ rush: { serviceId: ordered[0].id, action, n: Date.now() } });
+    const n = Date.now();
+    set({ rush: { serviceIds: ordered.map((s) => s.id), action, n }, controlError: null });
+    setTimeout(() => {
+      if (get().rush?.n === n) set({ rush: null });
+    }, 60_000);
     let failure: unknown;
     for (const svc of ordered) {
       try {
         await source.action(svc.id, action);
       } catch (e) {
         failure ??= e;
+        set({ controlError: { serviceId: svc.id, message: (e as Error).message, n: Date.now() } });
       }
     }
     if (failure) throw failure;

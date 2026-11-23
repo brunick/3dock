@@ -17,6 +17,10 @@ const TECH_SPEED = 2.3;
 const TECH_RUSH_SPEED = 12;
 /** A rush job always takes at most this many seconds, however far the rack is. */
 const RUSH_SECONDS = 3.5;
+/** How long a rushed rack gets before the technician moves to the next one. */
+const RUSH_WORK_SECONDS = 0.9;
+/** A failed action keeps him at the rack longer. */
+const RUSH_FAILURE_SECONDS = 4;
 const RUSH_LABEL = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' } as const;
 const TECH_DX = 0.42;
 const FACE_RACK = Math.PI; // racks face +z, so agents look toward -z
@@ -270,6 +274,7 @@ function Technician({
   const alerts = useStore((s) => s.alerts);
   const services = useStore((s) => s.services);
   const rush = useStore((s) => s.rush);
+  const controlError = useStore((s) => s.controlError);
   const still = useStore((s) => s.reducedMotion);
 
   /** Does this technician's share of the floor include that service? */
@@ -281,16 +286,23 @@ function Technician({
       .filter((a) => !a.resolvedAt && a.severity === 'critical' && services[a.serviceId]?.status === 'error' && mine(a.serviceId))
       .sort((a, b) => a.createdAt - b.createdAt)
       .map((a) => a.serviceId);
-    // A fresh start/stop/restart goes first, so the technician runs out immediately.
-    const rushed = rush && mine(rush.serviceId) ? [rush.serviceId] : [];
-    return [...new Set([...rushed, ...ids])].filter((id) => layout.slots[id]);
-  }, [alerts, services, layout, rush, projects]);
+    return [...new Set(ids)].filter((id) => layout.slots[id]);
+  }, [alerts, services, layout, projects]);
   const queueRef = useRef(queue);
   queueRef.current = queue;
+
+  // Rush jobs are a chain of racks to visit, one short visit each.
   const rushRef = useRef(rush);
   rushRef.current = rush;
+  const pending = useRef<string[]>([]);
+  const rushN = useRef<number | null>(null);
+  if (rush?.n !== rushN.current) {
+    rushN.current = rush?.n ?? null;
+    pending.current = rush ? rush.serviceIds.filter((id) => mine(id) && layout.slots[id]) : [];
+  } else if (!rush) {
+    pending.current = [];
+  }
 
-  const isRush = (id: string) => rushRef.current?.serviceId === id;
   const fromHome = (job: string): V3[] | null => {
     const route = routeFromHome(layout, job, TECH_DX);
     return route && [home, ...route];
@@ -300,22 +312,6 @@ function Technician({
     return route && [...route, home];
   };
 
-  // End the rush as soon as the upstream reports the target state.
-  useEffect(() => {
-    if (!rush) return;
-    const done =
-      rush.action !== 'restart' &&
-      services[rush.serviceId]?.status === (rush.action === 'stop' ? 'idle' : 'running');
-    if (done) useStore.getState().clearRush();
-  }, [rush, services]);
-
-  // Timeout fallback, anchored to the job rather than to every polling patch.
-  useEffect(() => {
-    if (!rush) return;
-    const t = setTimeout(() => useStore.getState().clearRush(), rush.action === 'restart' ? 6_000 : 15_000);
-    return () => clearTimeout(t);
-  }, [rush]);
-
   const [mode, setMode] = useState<TechPhase>('idle');
   const sim = useRef({
     phase: 'idle' as TechPhase,
@@ -323,6 +319,7 @@ function Technician({
     target: null as string | null,
     at: null as string | null,
     t: 0,
+    work: 0,
     speed: TECH_SPEED,
   });
 
@@ -345,6 +342,7 @@ function Technician({
       st.phase = phase;
       st.walker = new Walker(path);
       st.target = target;
+      st.work = 0;
       // A rush arrives within RUSH_SECONDS even from the far corner of the floor.
       st.speed = rushJob ? Math.max(TECH_RUSH_SPEED, pathLength(path) / RUSH_SECONDS) : TECH_SPEED;
       setMode(phase);
@@ -352,35 +350,46 @@ function Technician({
     };
     const next = () => {
       const from = st.at!;
-      const job = queueRef.current.find((id) => id !== from);
-      if (!(job && go('walk', routeBetween(layout, from, job, TECH_DX), job, isRush(job)))) {
-        go('home', toHome(from), null);
-      }
+      pending.current = pending.current.filter((id) => id !== from);
+      const job = pending.current[0] ?? queueRef.current.find((id) => id !== from);
+      if (job && go('walk', routeBetween(layout, from, job, TECH_DX), job, pending.current.includes(job))) return;
+      if (rushRef.current && !pending.current.length) useStore.getState().clearRush();
+      go('home', toHome(from), null);
     };
 
     switch (st.phase) {
       case 'idle': {
-        const job = queueRef.current[0];
-        if (job) go('walk', fromHome(job), job, isRush(job));
+        const job = pending.current[0] ?? queueRef.current[0];
+        if (job) go('walk', fromHome(job), job, pending.current.includes(job));
         break;
       }
       case 'walk':
         if (st.walker!.step(st.speed * dt)) {
           st.at = st.target;
-          if (st.at && queueRef.current.includes(st.at)) {
+          if (st.at && (pending.current.includes(st.at) || queueRef.current.includes(st.at))) {
             st.phase = 'work';
+            st.work = 0;
             setMode('work');
           } else next();
         }
         break;
       case 'work':
-        if (!queueRef.current.includes(st.at!)) next(); // Dokploy says it's healthy again
+        if (st.at && pending.current.includes(st.at)) {
+          // A failed action keeps the technician at the rack to look at it.
+          const failed = controlError?.serviceId === st.at;
+          st.work += dt;
+          if (st.work >= (failed ? RUSH_FAILURE_SECONDS : RUSH_WORK_SECONDS)) next();
+        } else if (!queueRef.current.includes(st.at!)) {
+          next(); // the upstream says it is healthy again
+        }
         break;
       case 'home':
-        // A new job while walking home: turn around and run to it.
-        if (queueRef.current.length) {
-          const job = queueRef.current[0];
-          if (go('walk', st.at ? routeBetween(layout, st.at, job, TECH_DX) : fromHome(job), job, isRush(job))) break;
+        // A new job while walking home: continue from where he stands, via home.
+        {
+          const job = pending.current[0] ?? queueRef.current[0];
+          const here: V3 | null = st.walker ? [st.walker.pos.x, 0, st.walker.pos.z] : null;
+          const route = job ? fromHome(job) : null;
+          if (job && here && route && go('walk', [here, ...route], job, pending.current.includes(job))) break;
         }
         if (st.walker!.step(st.speed * dt)) {
           st.phase = 'idle';
@@ -419,10 +428,16 @@ function Technician({
       </group>
       {mode === 'work' && (
         <Label position={[0, 1.6, 0]} zIndex={9}>
-          <div className="bubble">
-            <span className="bubble-spinner" />
-            {rush && sim.current.at === rush.serviceId ? `${RUSH_LABEL[rush.action]}…` : 'Investigating…'}
-          </div>
+          {controlError && sim.current.at === controlError.serviceId ? (
+            <div className="bubble is-failed" title={controlError.message}>
+              ⚠ {controlError.message}
+            </div>
+          ) : (
+            <div className="bubble">
+              <span className="bubble-spinner" />
+              {rush && sim.current.at && rush.serviceIds.includes(sim.current.at) ? `${RUSH_LABEL[rush.action]}…` : 'Investigating…'}
+            </div>
+          )}
         </Label>
       )}
     </group>
