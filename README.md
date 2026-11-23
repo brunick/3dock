@@ -7,27 +7,36 @@ walks over to whatever goes down.
 
 ![3Dokploy with example projects](docs/screenshot.jpg)
 
-- **Live** – status, CPU, memory and network per service, an activity feed; with Dokploy also
-  deploys with their real build log and alerts for failed deploys.
+- **Live** – status, CPU, memory and network per service, an activity feed. With Dokploy also
+  deployments with their real build log, failed-deploy alerts and environments.
 - **Read-only by default** – 3Dokploy can't deploy, stop or change anything. In the Docker
   backend, container start/stop/restart can be enabled explicitly (see below).
-- **Self-hosted** – you run it next to your Dokploy, against a plain Docker engine, or on your
-  own machine. Credentials stay in the server's environment and never reach the browser.
+- **Self-hosted** – run it next to your Dokploy, against a plain Docker engine, or on your own
+  machine. Credentials stay in the server's environment and never reach the browser.
+- **A floor plan that reacts** – databases and caches become tanks, web servers get a blade
+  front, proxies a routing ring and workers a turning gear. Technicians sprint to outages and
+  stack actions, curse about them, and stay put when something fails.
 
-> Not affiliated with the Dokploy project.
+> This project is a fork of [suleyman/3dokploy](https://github.com/suleyman/3dokploy) (MIT).
+> It keeps the original concept and Dokploy backend and adds a local Docker backend, container
+> control, the technician crew and role-based unit designs. Not affiliated with the Dokploy
+> project.
 
 ## Quick start
 
-Two backends: **Dokploy** (default) needs an API key, created under **Settings → Profile →
-API/CLI**. The **Docker** backend needs only the local Docker socket — see
-[Against a local Docker engine](#against-a-local-docker-engine).
+Two backends, selected with `BACKEND`:
+
+- **`dokploy`** (default) reads your Dokploy through its API. Needs an API key, created in
+  Dokploy under **Settings → Profile → API/CLI**.
+- **`docker`** reads the local Docker engine through a small read-only Go proxy. Needs only the
+  Docker socket — see [Against a local Docker engine](#against-a-local-docker-engine).
 
 ### On your machine
 
 Requires Node.js 22.6 or newer.
 
 ```sh
-git clone https://github.com/suleyman/3dokploy.git && cd 3dokploy
+git clone https://github.com/brunick/3dock.git && cd 3dock
 cp .env.example .env.local   # set DOKPLOY_URL and DOKPLOY_API_KEY
 npm install
 npm run build
@@ -37,21 +46,21 @@ npm start                    # → http://localhost:3000
 ### Docker Compose
 
 ```sh
-git clone https://github.com/suleyman/3dokploy.git && cd 3dokploy
+git clone https://github.com/brunick/3dock.git && cd 3dock
 cp .env.example .env         # set DOKPLOY_URL and DOKPLOY_API_KEY
 docker compose up -d
 ```
 
 Open <http://localhost:3000>. Dokploy itself listens on port 3000, so on the same machine set
 `HOST_PORT=3100` (or any free port) in `.env`, and use `DOKPLOY_URL=http://host.docker.internal:3000`
-to reach it. A prebuilt image is published to `ghcr.io/suleyman/3dokploy`.
+to reach it.
 
 ### Against a local Docker engine
 
-Docker has no Dokploy API, so 3Dokploy reads the engine directly through `proxy/`, a small
-read-only Go service. It speaks the Docker socket and exposes only GET endpoints: version,
-info, container list, one container, container logs and container stats. It never forwards
-arbitrary paths and cannot change anything.
+Docker has no Dokploy API, so 3Dokploy reads the engine directly through `proxy/`, a small Go
+service. It speaks the Docker socket and exposes only a fixed set of endpoints: version, info,
+container list, one container, container logs and container stats. It never forwards arbitrary
+paths and cannot change anything by default.
 
 Locally, run the proxy next to the app:
 
@@ -66,13 +75,24 @@ With Compose (set `BACKEND=docker` and `DOCKER_GID=$(stat -c %g /var/run/docker.
 docker compose --profile docker up -d --build
 ```
 
-Compose projects become buildings, containers become racks, and CPU, memory, network,
-health and status are live. Docker has no deployments, build logs or commit metadata, so
-the deploy pipeline stays empty. Domains are not shown either — Docker does not know them.
+What maps: Compose projects become buildings, containers become racks, and CPU, memory, network,
+health and status are live. Unit designs follow the container's role, derived from the Dokploy
+kind, the image and then the name:
+
+| Role | Looks like |
+| --- | --- |
+| database, cache | tank with glowing bands |
+| web / API | cabinet with a blade front and status lights |
+| proxy | cabinet with a slowly turning routing ring |
+| worker | cabinet with a gear that turns with CPU load |
+| everything else | plain cabinet |
+
+What does not: Docker has no deployments, build logs or commit metadata, so the deploy pipeline
+stays empty. Domains are not shown either — Docker does not know them.
 
 **Container control (start / stop / restart).** Off by default. Set
 `ALLOW_CONTAINER_CONTROL=true` for both the proxy and the app to enable the buttons in the
-inspector:
+inspector and next to a building's door (for a whole Compose stack):
 
 ```sh
 ALLOW_CONTAINER_CONTROL=true npm run dev:proxy
@@ -85,13 +105,13 @@ or, with Compose:
 BACKEND=docker ALLOW_CONTAINER_CONTROL=true docker compose --profile docker up -d --build
 ```
 
-Those requests are same-origin only, but anyone who can open the page can then stop and
-restart containers. Use `BASIC_AUTH` or keep it on your machine. With the switch off, the
-Docker backend is read-only exactly like the Dokploy one.
+Those requests are same-origin only, but anyone who can open the page can then stop and restart
+containers. Use `BASIC_AUTH` or keep it on your machine. With the switch off, the Docker backend
+is read-only exactly like the Dokploy one. A stack is started container by container
+(databases first, stopped last), which approximates `depends_on` but is not `docker compose`.
 
-The Docker socket grants host-level privileges. The proxy binds to `127.0.0.1` by default
-and only exposes read-only endpoints; still, anyone who can reach the proxy can read the
-whole Docker host.
+The Docker socket grants host-level privileges. The proxy binds to `127.0.0.1` by default and the
+switch is off by default; still, anyone who can reach the proxy can read the whole Docker host.
 
 ### On Dokploy
 
@@ -113,11 +133,13 @@ build type and port **3000**, set the variables below, then add a domain.
 | `DOCKER_PROXY_URL` | `http://127.0.0.1:3101` | Docker mode: address of the Go proxy |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Proxy: Docker Engine socket |
 | `DOCKER_GID` | – | Compose only: the socket's group id |
-| `BASIC_AUTH` | – | `user:password` login for the page. Set it whenever others can reach the address. |
+| `BASIC_AUTH` | – | `user:password` login for the page |
 | `PORT` | `3000` | Port the server listens on |
+| `HOST_PORT` | `3000` | Compose: published host port |
 
 Without `BASIC_AUTH`, **anyone who can open the page sees your Dokploy or your Docker host**
-(read-only; Dokploy secrets are stripped). Put it behind HTTPS if it's reachable from the internet.
+(read-only by default; Dokploy secrets are stripped). Put it behind HTTPS if it's reachable from
+the internet.
 
 ## Controls
 
@@ -132,6 +154,9 @@ Without `BASIC_AUTH`, **anyone who can open the page sees your Dokploy or your D
 | `F` / `Shift+F` / `R` | Frame the selection / fullscreen / reset the view |
 | `/` | Filter nodes |
 | `M` | Sound on/off |
+
+With container control enabled, the inspector shows **Start / Stop / Restart** for one container,
+and a stack with more than one container gets **Start all / Stop all / ⟳** next to its entrance.
 
 ## How it works
 
@@ -151,6 +176,8 @@ browser ──/api/<procedure>─▶ 3Dokploy server ──x-api-key──▶ Do
   start/stop/restart, and only same-origin requests are accepted for those.
 - **Secrets are stripped** from Dokploy responses before they reach the browser: env vars,
   passwords, tokens, build secrets (3Dokploy never needs them).
+- Docker container types are a **heuristic** (kind, then image, then name), used only for the
+  unit design.
 - No database, no sessions, nothing stored. Same-origin only, with a strict Content-Security-Policy.
 
 ## Development
@@ -178,18 +205,19 @@ proxy/                 read-only Go proxy in front of the Docker socket
 server/                read-only forwarding (Dokploy allowlist / Docker routes) + static file server
 src/data/dokploy/      Dokploy API client and the collector that polls and diffs (runs in the browser)
 src/data/docker/       Docker API client and the collector that polls and diffs (runs in the browser)
+src/data/roles.ts      container role heuristic (database, cache, proxy, worker, web)
 src/data/              types, the data source
-src/layout.ts        projects → buildings, services → racks, walking routes
-src/scene/           three.js scene (react-three-fiber): buildings, racks, agents, effects
-src/hud/             overlay UI: top bar, menus, KPIs, inspector, pipeline
-src/sound.ts         UI sounds, synthesised with Web Audio
-templates/dokploy/   Dokploy template
+src/layout.ts          projects → buildings, services → racks, walking routes
+src/scene/             three.js scene (react-three-fiber): buildings, racks, agents, effects
+src/hud/               overlay UI: top bar, menus, KPIs, inspector, pipeline
+src/sound.ts           UI sounds, synthesised with Web Audio
+templates/dokploy/     Dokploy template
 ```
 
 ### Releasing
 
-Pushing a tag like `v0.2.0` publishes `ghcr.io/suleyman/3dokploy:0.2.0` (amd64 + arm64).
-Make the package public in GitHub's package settings so others can pull it.
+Pushing a tag like `v0.2.0` publishes an image through GitHub Actions (amd64 + arm64). The
+compose file builds locally; add an `image:` for the registry you publish to.
 
 ## Notes and limits
 
@@ -198,9 +226,22 @@ Make the package public in GitHub's package settings so others can pull it.
   metrics yet.
 - With Docker, metrics come straight from the engine's container stats. There are no
   deployments, build logs or domains, because Docker keeps no such records.
+- A stopped container is `idle` only when it exited cleanly (`Exited (0)`); any other exit code
+  is shown as `error`.
+- Technicians visit every rack of a stack in order, sprint to fresh actions, turn around when a
+  new job arrives on their way home, and linger at a rack whose action failed.
 - `docker stats` rounds network counters, so traffic rates are estimates over a short window.
 - Polling pauses while the tab is in the background.
+- Enabling `ALLOW_CONTAINER_CONTROL` changes the read-only guarantee: the page can then stop and
+  restart containers.
 
-## License
+## Credits and license
 
-[MIT](LICENSE)
+[MIT](LICENSE).
+
+Built on [suleyman/3dokploy](https://github.com/suleyman/3dokploy) — the original isometric
+Dokploy floor, its scene, data model and Dokploy integration. This fork adds the Docker backend
+and Go proxy, container control, the technician crew and role-based unit designs:
+[brunick/3dock](https://github.com/brunick/3dock).
+
+Dokploy is a separate open-source project; 3Dokploy is not affiliated with it.
