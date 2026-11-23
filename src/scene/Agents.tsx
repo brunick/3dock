@@ -13,8 +13,15 @@ import { Label } from './Label';
 
 const CART_SPEED = 3.2;
 const TECH_SPEED = 2.3;
+/** Speed for a start/stop/restart job: the technician sprints. */
+const TECH_RUSH_SPEED = 12;
+/** A rush job always takes at most this many seconds, however far the rack is. */
+const RUSH_SECONDS = 3.5;
+const RUSH_LABEL = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' } as const;
 const TECH_DX = 0.42;
 const FACE_RACK = Math.PI; // racks face +z, so agents look toward -z
+/** One technician per this many projects. */
+const PROJECTS_PER_WORKER = 4;
 
 // ---- path following -----------------------------------------------------------------
 
@@ -63,6 +70,17 @@ class Walker {
 
 const headingTo = (a: THREE.Vector3, b: THREE.Vector3) => Math.atan2(b.x - a.x, b.z - a.z);
 
+/** Length of a path on the floor plane, for a rush that must arrive in time. */
+const pathLength = (pts: V3[]) =>
+  pts.reduce((acc, p, i) => (i ? acc + Math.hypot(p[0] - pts[i - 1][0], p[2] - pts[i - 1][2]) : 0), 0);
+
+/** Home spots for several technicians, spread in a small ring around the marker. */
+function homeAt(home: V3, i: number, n: number): V3 {
+  if (n <= 1) return home;
+  const angle = (i / n) * Math.PI * 2;
+  return [home[0] + Math.cos(angle) * 0.8, home[1], home[2] + Math.sin(angle) * 0.8];
+}
+
 function dampAngle(current: number, target: number, lambda: number, dt: number) {
   const diff = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + diff * (1 - Math.exp(-lambda * dt));
@@ -76,13 +94,29 @@ function dampAngle(current: number, target: number, lambda: number, dt: number) 
  */
 export function Agents({ layout }: { layout: Layout }) {
   const carts = useStore((s) => s.carts);
+  const projects = useStore((s) => s.projects);
+
+  // One technician per four projects, each responsible for its own share.
+  const crew = useMemo(() => {
+    const ids = Object.keys(projects).sort();
+    const count = Math.max(1, Math.ceil(ids.length / PROJECTS_PER_WORKER));
+    return Array.from({ length: count }, (_, i) => ({
+      home: homeAt(layout.home, i, count),
+      projects: new Set(ids.filter((_, k) => k % count === i)),
+    }));
+  }, [projects, layout.home]);
+
   return (
     <>
       {carts.map((id) => (
         <Cart key={id} deploymentId={id} layout={layout} />
       ))}
-      <Technician layout={layout} />
-      <HomeMarker at={layout.home} />
+      {crew.map((w, i) => (
+        <Technician key={i} layout={layout} home={w.home} projects={w.projects} />
+      ))}
+      {crew.map((w, i) => (
+        <HomeMarker key={i} at={w.home} />
+      ))}
     </>
   );
 }
@@ -224,21 +258,63 @@ const Cart = memo(function Cart({ deploymentId, layout }: { deploymentId: string
 
 type TechPhase = 'idle' | 'walk' | 'work' | 'home';
 
-function Technician({ layout }: { layout: Layout }) {
+function Technician({
+  layout,
+  home,
+  projects,
+}: {
+  layout: Layout;
+  home: V3;
+  projects: Set<string>;
+}) {
   const alerts = useStore((s) => s.alerts);
   const services = useStore((s) => s.services);
+  const rush = useStore((s) => s.rush);
   const still = useStore((s) => s.reducedMotion);
+
+  /** Does this technician's share of the floor include that service? */
+  const mine = (id: string) => projects.has(services[id]?.projectId ?? '');
 
   // Services that need a hand: open critical alert + still in error. Oldest incident first.
   const queue = useMemo(() => {
     const ids = Object.values(alerts)
-      .filter((a) => !a.resolvedAt && a.severity === 'critical' && services[a.serviceId]?.status === 'error')
+      .filter((a) => !a.resolvedAt && a.severity === 'critical' && services[a.serviceId]?.status === 'error' && mine(a.serviceId))
       .sort((a, b) => a.createdAt - b.createdAt)
       .map((a) => a.serviceId);
-    return [...new Set(ids)].filter((id) => layout.slots[id]);
-  }, [alerts, services, layout]);
+    // A fresh start/stop/restart goes first, so the technician runs out immediately.
+    const rushed = rush && mine(rush.serviceId) ? [rush.serviceId] : [];
+    return [...new Set([...rushed, ...ids])].filter((id) => layout.slots[id]);
+  }, [alerts, services, layout, rush, projects]);
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const rushRef = useRef(rush);
+  rushRef.current = rush;
+
+  const isRush = (id: string) => rushRef.current?.serviceId === id;
+  const fromHome = (job: string): V3[] | null => {
+    const route = routeFromHome(layout, job, TECH_DX);
+    return route && [home, ...route];
+  };
+  const toHome = (from: string): V3[] | null => {
+    const route = routeHome(layout, from, TECH_DX);
+    return route && [...route, home];
+  };
+
+  // End the rush as soon as the upstream reports the target state.
+  useEffect(() => {
+    if (!rush) return;
+    const done =
+      rush.action !== 'restart' &&
+      services[rush.serviceId]?.status === (rush.action === 'stop' ? 'idle' : 'running');
+    if (done) useStore.getState().clearRush();
+  }, [rush, services]);
+
+  // Timeout fallback, anchored to the job rather than to every polling patch.
+  useEffect(() => {
+    if (!rush) return;
+    const t = setTimeout(() => useStore.getState().clearRush(), rush.action === 'restart' ? 6_000 : 15_000);
+    return () => clearTimeout(t);
+  }, [rush]);
 
   const [mode, setMode] = useState<TechPhase>('idle');
   const sim = useRef({
@@ -247,6 +323,7 @@ function Technician({ layout }: { layout: Layout }) {
     target: null as string | null,
     at: null as string | null,
     t: 0,
+    speed: TECH_SPEED,
   });
 
   const root = useRef<THREE.Group>(null);
@@ -263,30 +340,32 @@ function Technician({ layout }: { layout: Layout }) {
     const dt = Math.min(rawDt, 0.1);
     st.t += dt;
 
-    const go = (phase: TechPhase, path: V3[] | null, target: string | null) => {
+    const go = (phase: TechPhase, path: V3[] | null, target: string | null, rushJob = false) => {
       if (!path) return false;
       st.phase = phase;
       st.walker = new Walker(path);
       st.target = target;
+      // A rush arrives within RUSH_SECONDS even from the far corner of the floor.
+      st.speed = rushJob ? Math.max(TECH_RUSH_SPEED, pathLength(path) / RUSH_SECONDS) : TECH_SPEED;
       setMode(phase);
       return true;
     };
     const next = () => {
       const from = st.at!;
       const job = queueRef.current.find((id) => id !== from);
-      if (!(job && go('walk', routeBetween(layout, from, job, TECH_DX), job))) {
-        go('home', routeHome(layout, from, TECH_DX), null);
+      if (!(job && go('walk', routeBetween(layout, from, job, TECH_DX), job, isRush(job)))) {
+        go('home', toHome(from), null);
       }
     };
 
     switch (st.phase) {
       case 'idle': {
         const job = queueRef.current[0];
-        if (job) go('walk', routeFromHome(layout, job, TECH_DX), job);
+        if (job) go('walk', fromHome(job), job, isRush(job));
         break;
       }
       case 'walk':
-        if (st.walker!.step(TECH_SPEED * dt)) {
+        if (st.walker!.step(st.speed * dt)) {
           st.at = st.target;
           if (st.at && queueRef.current.includes(st.at)) {
             st.phase = 'work';
@@ -298,7 +377,12 @@ function Technician({ layout }: { layout: Layout }) {
         if (!queueRef.current.includes(st.at!)) next(); // Dokploy says it's healthy again
         break;
       case 'home':
-        if (st.walker!.step(TECH_SPEED * dt)) {
+        // A new job while walking home: turn around and run to it.
+        if (queueRef.current.length) {
+          const job = queueRef.current[0];
+          if (go('walk', st.at ? routeBetween(layout, st.at, job, TECH_DX) : fromHome(job), job, isRush(job))) break;
+        }
+        if (st.walker!.step(st.speed * dt)) {
           st.phase = 'idle';
           st.at = null;
           st.walker = null;
@@ -310,11 +394,12 @@ function Technician({ layout }: { layout: Layout }) {
     // pose
     const walking = st.phase === 'walk' || st.phase === 'home';
     if (st.walker) g.position.copy(st.walker.pos);
-    else g.position.set(...layout.home);
+    else g.position.set(...home);
     const heading = st.phase === 'work' ? FACE_RACK : st.walker ? st.walker.heading : 0;
     g.rotation.y = dampAngle(g.rotation.y, heading, 10, dt);
 
-    const swing = walking && !still ? Math.sin(st.t * 10) * 0.55 : 0;
+    const gait = Math.min(3, st.speed / TECH_SPEED);
+    const swing = walking && !still ? Math.sin(st.t * 10 * gait) * 0.55 : 0;
     if (legL.current) legL.current.rotation.x = swing;
     if (legR.current) legR.current.rotation.x = -swing;
     if (armL.current) armL.current.rotation.x = -swing * 0.8;
@@ -323,7 +408,7 @@ function Technician({ layout }: { layout: Layout }) {
         st.phase === 'work' ? (still ? -1.9 : -1.6 - Math.abs(Math.sin(st.t * 7)) * 0.7) : swing * 0.8;
     }
     if (body.current) {
-      body.current.position.y = walking && !still ? Math.abs(Math.sin(st.t * 10)) * 0.035 : still ? 0 : Math.sin(st.t * 2) * 0.006;
+      body.current.position.y = walking && !still ? Math.abs(Math.sin(st.t * 10 * gait)) * 0.035 : still ? 0 : Math.sin(st.t * 2) * 0.006;
     }
   });
 
@@ -336,7 +421,7 @@ function Technician({ layout }: { layout: Layout }) {
         <Label position={[0, 1.6, 0]} zIndex={9}>
           <div className="bubble">
             <span className="bubble-spinner" />
-            Investigating…
+            {rush && sim.current.at === rush.serviceId ? `${RUSH_LABEL[rush.action]}…` : 'Investigating…'}
           </div>
         </Label>
       )}
