@@ -131,9 +131,10 @@ export function statusOf(c: Container): ServiceStatus {
   if (c.state === 'restarting' || c.state === 'dead') return 'error';
   // Docker keeps the last health result on stopped containers; only a running one can be unhealthy.
   if (c.state === 'running') return c.health === 'unhealthy' ? 'error' : 'running';
-  // "Exited (0) 2 minutes ago" is a clean stop; any other code is a failure.
+  // Exit 1–125 is a process failure. 0 is a clean exit, and 128+n is a signal
+  // (143 after `docker stop`, 137 after `docker kill`) — both are deliberate stops.
   const exit = /Exited \((\d+)\)/.exec(c.status ?? '');
-  if (exit && Number(exit[1]) !== 0) return 'error';
+  if (exit && Number(exit[1]) > 0 && Number(exit[1]) < 128) return 'error';
   return 'idle';
 }
 

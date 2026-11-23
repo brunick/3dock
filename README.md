@@ -226,8 +226,8 @@ compose file builds locally; add an `image:` for the registry you publish to.
   metrics yet.
 - With Docker, metrics come straight from the engine's container stats. There are no
   deployments, build logs or domains, because Docker keeps no such records.
-- A stopped container is `idle` only when it exited cleanly (`Exited (0)`); any other exit code
-  is shown as `error`.
+- A stopped container is `error` only when the process failed (exit code 1–125). Exit 0 and
+  signal exits — 143 after `docker stop`, 137 after `docker kill` — are shown as `idle`.
 - Technicians visit every rack of a stack in order, sprint to fresh actions, turn around when a
   new job arrives on their way home, and linger at a rack whose action failed.
 - `docker stats` rounds network counters, so traffic rates are estimates over a short window.
